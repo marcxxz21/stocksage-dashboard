@@ -1023,7 +1023,7 @@ function NamePrompt({
             autoFocus
             value={draftName}
             onChange={(event) => setDraftName(event.target.value)}
-            placeholder="Marc Asas"
+            placeholder="Put your name here"
             maxLength={48}
           />
         </label>
@@ -1686,7 +1686,7 @@ function SettingsSection({
                 <Input
                   value={draftName}
                   onChange={(event) => setDraftName(event.target.value)}
-                  placeholder="Marc Asas"
+                  placeholder="Put your name here"
                   maxLength={48}
                 />
               </label>
