@@ -173,6 +173,24 @@ function firstName(name: string) {
   return name.trim().split(/\s+/)[0] || "Analyst";
 }
 
+function latestChartTrend(analysis: StockSageAnalysis) {
+  const latest = analysis.chart.at(-1);
+  const previous = analysis.chart.at(-2);
+
+  if (!latest || !previous || previous.close === 0) {
+    return null;
+  }
+
+  const change = latest.close - previous.close;
+  return {
+    latest: latest.close,
+    previous: previous.close,
+    change,
+    changePct: (change / previous.close) * 100,
+    direction: change >= 0 ? "up" : "down",
+  };
+}
+
 export function StockSageDashboard() {
   const [active, setActive] = useState<SectionId>("overview");
   const [displayName, setDisplayName] = useState(defaults.displayName);
@@ -523,6 +541,7 @@ export function StockSageDashboard() {
               loading={loading}
               onQuickTicker={chooseTicker}
               onAddWatchlist={addToWatchlist}
+              watchlist={watchlist}
             />
           </section>
         </main>
@@ -637,7 +656,8 @@ function TopBar({
   const current = navItems.find((item) => item.id === active);
   const CurrentIcon = current?.icon;
   const watchedCurrent = watchlist.includes(analysis.ticker);
-  const hasPositiveWatchlistMove = watchedCurrent && analysis.quote.change > 0;
+  const currentTrend = latestChartTrend(analysis);
+  const hasPositiveWatchlistMove = watchedCurrent && currentTrend?.change ? currentTrend.change > 0 : false;
   const alertCount = hasPositiveWatchlistMove ? 1 : 0;
   const [searchTicker, setSearchTicker] = useState("");
 
@@ -778,7 +798,9 @@ function WatchlistNotification({
   watchlist: string[];
 }) {
   const watchedCurrent = watchlist.includes(analysis.ticker);
-  const hasPositiveMove = watchedCurrent && analysis.quote.change > 0;
+  const trend = latestChartTrend(analysis);
+  const hasTrend = watchedCurrent && trend;
+  const positiveTrend = hasTrend ? trend.change >= 0 : false;
 
   return (
     <div className="w-72 overflow-hidden rounded-lg">
@@ -799,21 +821,40 @@ function WatchlistNotification({
           <div className="rounded-md border border-dashed border-zinc-700 bg-zinc-950 p-3 text-sm text-muted-foreground">
             No live info for your watchlist.
           </div>
-        ) : hasPositiveMove ? (
-          <div className="rounded-md border border-emerald-400/25 bg-emerald-400/10 p-3">
+        ) : hasTrend ? (
+          <div
+            className={cn(
+              "rounded-md border p-3",
+              positiveTrend
+                ? "border-emerald-400/25 bg-emerald-400/10"
+                : "border-rose-400/25 bg-rose-400/10",
+            )}
+          >
             <div className="flex items-center justify-between gap-3">
-              <p className="font-mono text-base font-semibold text-emerald-200">{analysis.ticker}</p>
-              <Badge className="border-emerald-400/25 bg-emerald-400/15 text-emerald-200">
-                {percent(analysis.quote.changePct, 2)}
+              <p className={cn("font-mono text-base font-semibold", positiveTrend ? "text-emerald-200" : "text-rose-200")}>
+                {analysis.ticker}
+              </p>
+              <Badge
+                className={cn(
+                  "border",
+                  positiveTrend
+                    ? "border-emerald-400/25 bg-emerald-400/15 text-emerald-200"
+                    : "border-rose-400/25 bg-rose-400/15 text-rose-200",
+                )}
+              >
+                {percent(trend.changePct, 2)}
               </Badge>
             </div>
-            <p className="mt-2 text-sm text-emerald-100/85">
-              Up {currency(analysis.quote.change)} to {currency(analysis.quote.price)}
+            <p className={cn("mt-2 text-sm", positiveTrend ? "text-emerald-100/85" : "text-rose-100/85")}>
+              {positiveTrend ? "Up" : "Down"} {currency(Math.abs(trend.change))} to {currency(trend.latest)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Previous close in chart: {currency(trend.previous)}
             </p>
           </div>
         ) : (
           <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-sm text-muted-foreground">
-            No upward moves in your live watchlist yet. Analyze a saved symbol to refresh its alert.
+            No live info for this watchlist symbol yet. Analyze a saved symbol to refresh its trend.
           </div>
         )}
 
@@ -846,6 +887,7 @@ function ControlRail({
   loading,
   onQuickTicker,
   onAddWatchlist,
+  watchlist,
 }: {
   ticker: string;
   capital: number;
@@ -861,7 +903,11 @@ function ControlRail({
   loading: boolean;
   onQuickTicker: (ticker: string) => void;
   onAddWatchlist: (ticker?: string) => void;
+  watchlist: string[];
 }) {
+  const normalizedTicker = normalizeTicker(ticker);
+  const tickerSaved = Boolean(normalizedTicker && watchlist.includes(normalizedTicker));
+
   return (
     <aside className="min-w-0 xl:sticky xl:top-24 xl:h-[calc(100vh-7rem)] xl:overflow-y-auto">
       <form onSubmit={onAnalyze} className="rounded-lg border border-border bg-card/70 p-4">
@@ -883,8 +929,15 @@ function ControlRail({
                 className="font-mono"
                 placeholder="NVDA"
               />
-              <Button type="button" variant="outline" size="icon" onClick={() => onAddWatchlist(ticker)} aria-label="Save ticker">
-                <Star className="h-4 w-4" />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => onAddWatchlist(ticker)}
+                aria-label={tickerSaved ? `${normalizedTicker} is in watchlist` : "Save ticker"}
+                className={cn(tickerSaved && "border-emerald-400/35 bg-emerald-400/10 text-emerald-300")}
+              >
+                <Star className={cn("h-4 w-4", tickerSaved && "fill-current")} />
               </Button>
             </div>
           </label>
