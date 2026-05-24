@@ -296,17 +296,35 @@ export function StockSageDashboard() {
 
   function chooseTicker(symbol: string) {
     const normalized = normalizeTicker(symbol);
+    if (!normalized) {
+      setError("Enter a stock ticker symbol first.");
+      return;
+    }
+    const previousTicker = ticker;
+    const previousAnalysis = analysis;
+    const previousSource = source;
     setTicker(normalized);
     setAnalysis(createMockAnalysis(normalized, timeframe));
     setSource("demo");
     setError(null);
     setActive("overview");
     window.requestAnimationFrame(() => {
-      void analyzeTicker(normalized);
+      void analyzeTicker(normalized, {
+        previousAnalysis,
+        previousSource,
+        previousTicker,
+      });
     });
   }
 
-  async function analyzeTicker(symbol: string) {
+  async function analyzeTicker(
+    symbol: string,
+    rollback?: {
+      previousAnalysis: StockSageAnalysis;
+      previousSource: "demo" | "live";
+      previousTicker: string;
+    },
+  ) {
     const normalized = normalizeTicker(symbol);
     const payload: AnalyzeRequest = {
       ticker: normalized,
@@ -334,8 +352,23 @@ export function StockSageDashboard() {
       setSource("live");
       setRecent((items) => [normalized, ...items.filter((item) => item !== normalized)].slice(0, 6));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "StockSage analysis failed.");
-      setSource("demo");
+      if (rollback) {
+        setTicker(rollback.previousTicker);
+        setAnalysis(rollback.previousAnalysis);
+        setSource(rollback.previousSource);
+      }
+      const message = caught instanceof Error ? caught.message : "StockSage analysis failed.";
+      setError(
+        message.toLowerCase().includes("yahoo") ||
+          message.toLowerCase().includes("ticker") ||
+          message.toLowerCase().includes("history") ||
+          message.toLowerCase().includes("chart")
+          ? `${normalized} is not a valid ticker or has no live Yahoo Finance data. Check the symbol and try again.`
+          : message,
+      );
+      if (!rollback) {
+        setSource("demo");
+      }
     } finally {
       setLoading(false);
     }
@@ -606,6 +639,17 @@ function TopBar({
   const watchedCurrent = watchlist.includes(analysis.ticker);
   const hasPositiveWatchlistMove = watchedCurrent && analysis.quote.change > 0;
   const alertCount = hasPositiveWatchlistMove ? 1 : 0;
+  const [searchTicker, setSearchTicker] = useState("");
+
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalized = normalizeTicker(searchTicker);
+    if (!normalized) {
+      return;
+    }
+    onChooseTicker(normalized);
+    setSearchTicker("");
+  }
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-black/85 shadow-[0_1px_0_rgba(16,185,129,0.08)] backdrop-blur">
@@ -665,16 +709,20 @@ function TopBar({
           </div>
         </div>
 
-        <div className="hidden min-w-64 items-center gap-2 rounded-md border border-border bg-zinc-950/90 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] md:flex">
+        <form
+          onSubmit={submitSearch}
+          className="hidden min-w-48 items-center gap-2 rounded-md border border-border bg-zinc-950/90 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:flex md:min-w-64"
+        >
           <Search className="h-4 w-4 text-muted-foreground" />
-          <button
-            type="button"
-            className="text-sm text-muted-foreground"
-            onClick={() => onChooseTicker(analysis.ticker)}
-          >
-            Search active ticker...
-          </button>
-        </div>
+          <input
+            value={searchTicker}
+            onChange={(event) => setSearchTicker(event.target.value.toUpperCase())}
+            className="min-w-0 flex-1 bg-transparent font-mono text-sm text-foreground outline-none placeholder:font-sans placeholder:text-muted-foreground"
+            placeholder="Search ticker..."
+            aria-label="Search stock ticker"
+            maxLength={12}
+          />
+        </form>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -908,19 +956,37 @@ function ControlRail({
 }
 
 function ErrorBanner({ message }: { message: string }) {
+  const invalidTicker = message.toLowerCase().includes("not a valid ticker");
+
   return (
-    <div className="overflow-hidden rounded-lg border border-amber-400/25 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(8,8,8,0.88))] shadow-[0_0_32px_rgba(245,158,11,0.08)]">
-      <div className="flex items-start gap-3 p-4 text-sm text-amber-50">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-amber-300/30 bg-amber-400/10">
-          <AlertTriangle className="h-4 w-4 text-amber-300" />
+    <div
+      className={cn(
+        "overflow-hidden rounded-lg shadow-[0_0_32px_rgba(244,63,94,0.08)]",
+        invalidTicker
+          ? "border border-rose-400/30 bg-[linear-gradient(135deg,rgba(244,63,94,0.16),rgba(8,8,8,0.9))]"
+          : "border border-amber-400/25 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(8,8,8,0.88))]",
+      )}
+    >
+      <div className={cn("flex items-start gap-3 p-4 text-sm", invalidTicker ? "text-rose-50" : "text-amber-50")}>
+        <div
+          className={cn(
+            "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border",
+            invalidTicker ? "border-rose-300/30 bg-rose-400/10" : "border-amber-300/30 bg-amber-400/10",
+          )}
+        >
+          <AlertTriangle className={cn("h-4 w-4", invalidTicker ? "text-rose-300" : "text-amber-300")} />
         </div>
         <div className="min-w-0">
-          <div className="font-medium text-amber-100">Live analysis is unavailable</div>
-          <div className="mt-1 leading-6 text-amber-100/75">{message}</div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-100/65">
-            <Terminal className="h-3.5 w-3.5" />
-            <span className="font-mono">cd services/api && uvicorn app.main:app --reload --port 8000</span>
+          <div className={cn("font-medium", invalidTicker ? "text-rose-100" : "text-amber-100")}>
+            {invalidTicker ? "Invalid ticker" : "Live analysis is unavailable"}
           </div>
+          <div className={cn("mt-1 leading-6", invalidTicker ? "text-rose-100/75" : "text-amber-100/75")}>{message}</div>
+          {!invalidTicker ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-100/65">
+              <Terminal className="h-3.5 w-3.5" />
+              <span className="font-mono">cd services/api && uvicorn app.main:app --reload --port 8000</span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
