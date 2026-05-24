@@ -1,0 +1,14 @@
+{
+  "name": "stocksage-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "web:dev": "npm --prefix apps/web run dev",
+    "web:build": "npm --prefix apps/web run build",
+    "web:lint": "npm --prefix apps/web run lint",
+    "web:typecheck": "npm --prefix apps/web run typecheck",
+    "api:dev": "uvicorn app.main:app --reload --app-dir services/api",
+    "api:test": "PYTHONPATH=services/api pytest services/api/tests"
+  }
+}
+

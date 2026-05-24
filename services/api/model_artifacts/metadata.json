@@ -1,0 +1,1 @@
+{"feature_cols": ["Close", "Returns", "MA20", "MA50", "RSI", "Vol_Rel"], "seq_len": 30, "framework": "pytorch"}
