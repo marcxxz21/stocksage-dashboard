@@ -34,7 +34,7 @@ import {
   XCircle,
 } from "lucide-react";
 
-import { mockAnalysis } from "@/lib/mock-analysis";
+import { createMockAnalysis, mockAnalysis } from "@/lib/mock-analysis";
 import type {
   AnalyzeRequest,
   ChartPoint,
@@ -253,6 +253,9 @@ export function StockSageDashboard() {
     event?.preventDefault();
     setLoading(true);
     setError(null);
+    const optimisticAnalysis = createMockAnalysis(requestPayload.ticker, requestPayload.timeframe);
+    setAnalysis(optimisticAnalysis);
+    setSource("demo");
 
     try {
       const response = await fetch("/api/analyze", {
@@ -271,6 +274,8 @@ export function StockSageDashboard() {
       setRecent((items) => [requestPayload.ticker, ...items.filter((item) => item !== requestPayload.ticker)].slice(0, 6));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "StockSage analysis failed.");
+      setAnalysis(optimisticAnalysis);
+      setSource("demo");
     } finally {
       setLoading(false);
     }
@@ -289,8 +294,50 @@ export function StockSageDashboard() {
   }
 
   function chooseTicker(symbol: string) {
-    setTicker(symbol);
+    const normalized = normalizeTicker(symbol);
+    setTicker(normalized);
+    setAnalysis(createMockAnalysis(normalized, timeframe));
+    setSource("demo");
+    setError(null);
     setActive("overview");
+    window.requestAnimationFrame(() => {
+      void analyzeTicker(normalized);
+    });
+  }
+
+  async function analyzeTicker(symbol: string) {
+    const normalized = normalizeTicker(symbol);
+    const payload: AnalyzeRequest = {
+      ticker: normalized,
+      capital,
+      targetPct,
+      lossPct,
+      timeframe,
+    };
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "StockSage analysis failed.");
+      }
+
+      setAnalysis(result as StockSageAnalysis);
+      setSource("live");
+      setRecent((items) => [normalized, ...items.filter((item) => item !== normalized)].slice(0, 6));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "StockSage analysis failed.");
+      setSource("demo");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function saveDisplayName(event?: FormEvent<HTMLFormElement>) {
