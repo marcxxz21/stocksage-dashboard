@@ -47,6 +47,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -675,19 +676,25 @@ function TopBar({
           </button>
         </div>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" className="relative shrink-0" aria-label="Watchlist notifications">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="relative shrink-0"
+              aria-label="Open watchlist notifications"
+            >
               <Bell className="h-4 w-4" />
               {alertCount > 0 ? (
                 <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.75)]" />
               ) : null}
             </Button>
-          </TooltipTrigger>
-          <TooltipContent className="max-w-80 border-border bg-zinc-950 p-0 text-left shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={10} className="w-72 border-border bg-zinc-950 p-0 text-left shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
             <WatchlistNotification analysis={analysis} source={source} watchlist={watchlist} />
-          </TooltipContent>
-        </Tooltip>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <button
           type="button"
           onClick={onEditName}
