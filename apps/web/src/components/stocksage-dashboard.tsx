@@ -15,9 +15,11 @@ import {
   Gauge,
   Globe,
   Info,
+  KeyRound,
   LayoutDashboard,
   LineChart,
   Loader2,
+  LogOut,
   Menu,
   Newspaper,
   RefreshCcw,
@@ -30,6 +32,7 @@ import {
   Terminal,
   Trash2,
   TrendingUp,
+  UserRound,
   WalletCards,
   XCircle,
 } from "lucide-react";
@@ -79,6 +82,9 @@ type PersistedState = {
   timeframe: Timeframe;
   watchlist: string[];
   recent: string[];
+  accountUsername: string;
+  passwordHash: string;
+  accountCreatedAt: string;
 };
 
 const defaults: PersistedState = {
@@ -90,6 +96,9 @@ const defaults: PersistedState = {
   timeframe: "1m",
   watchlist: ["NVDA", "AAPL", "MSFT", "SPY"],
   recent: ["NVDA"],
+  accountUsername: "",
+  passwordHash: "",
+  accountCreatedAt: "",
 };
 
 function currency(value: number | null | undefined, compact = false) {
@@ -172,6 +181,14 @@ function firstName(name: string) {
   return name.trim().split(/\s+/)[0] || "Analyst";
 }
 
+async function hashPassword(username: string, password: string) {
+  const bytes = new TextEncoder().encode(`stocksage:${username.trim().toLowerCase()}:${password}`);
+  const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export function StockSageDashboard() {
   const [active, setActive] = useState<SectionId>("overview");
   const [displayName, setDisplayName] = useState(defaults.displayName);
@@ -189,20 +206,40 @@ export function StockSageDashboard() {
   const [source, setSource] = useState<"demo" | "live">("demo");
   const [hydrated, setHydrated] = useState(false);
   const [showNamePrompt, setShowNamePrompt] = useState(false);
+  const [accountUsername, setAccountUsername] = useState(defaults.accountUsername);
+  const [passwordHash, setPasswordHash] = useState(defaults.passwordHash);
+  const [accountCreatedAt, setAccountCreatedAt] = useState(defaults.accountCreatedAt);
+  const [draftUsername, setDraftUsername] = useState(defaults.accountUsername);
+  const [draftPassword, setDraftPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"setup" | "signin" | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       try {
         const stored = window.localStorage.getItem(STORAGE_KEY);
         if (!stored) {
-          setShowNamePrompt(true);
+          setShowNamePrompt(false);
+          setAuthMode("setup");
           return;
         }
         const parsed = JSON.parse(stored) as Partial<PersistedState>;
         const savedName = parsed.displayName || defaults.displayName;
+        const savedUsername = parsed.accountUsername || defaults.accountUsername;
+        const savedHash = parsed.passwordHash || defaults.passwordHash;
         setDisplayName(savedName);
         setDraftName(savedName);
-        setShowNamePrompt(!savedName);
+        setAccountUsername(savedUsername);
+        setDraftUsername(savedUsername);
+        setPasswordHash(savedHash);
+        setAccountCreatedAt(parsed.accountCreatedAt || defaults.accountCreatedAt);
+        setShowNamePrompt(false);
+        if (savedUsername && savedHash) {
+          const sessionKey = window.sessionStorage.getItem("stocksage:session");
+          setAuthMode(sessionKey === savedUsername ? null : "signin");
+        } else {
+          setAuthMode("setup");
+        }
         setTicker(parsed.ticker || defaults.ticker);
         setCapital(parsed.capital || defaults.capital);
         setTargetPct(parsed.targetPct || defaults.targetPct);
@@ -212,7 +249,7 @@ export function StockSageDashboard() {
         setRecent(parsed.recent?.length ? parsed.recent : defaults.recent);
       } catch {
         window.localStorage.removeItem(STORAGE_KEY);
-        setShowNamePrompt(true);
+        setAuthMode("setup");
       } finally {
         setHydrated(true);
       }
@@ -234,9 +271,12 @@ export function StockSageDashboard() {
       timeframe,
       watchlist,
       recent,
+      accountUsername,
+      passwordHash,
+      accountCreatedAt,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [capital, displayName, hydrated, lossPct, recent, targetPct, ticker, timeframe, watchlist]);
+  }, [accountCreatedAt, accountUsername, capital, displayName, hydrated, lossPct, passwordHash, recent, targetPct, ticker, timeframe, watchlist]);
 
   const requestPayload: AnalyzeRequest = useMemo(
     () => ({
@@ -357,6 +397,66 @@ export function StockSageDashboard() {
     setShowNamePrompt(true);
   }
 
+  async function saveLocalAccount(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    const cleanName = draftName.trim();
+    const cleanUsername = draftUsername.trim();
+    if (!cleanName || !cleanUsername || draftPassword.length < 6) {
+      setAuthError("Use a display name, username, and a password with at least 6 characters.");
+      return;
+    }
+
+    const hashed = await hashPassword(cleanUsername, draftPassword);
+    setDisplayName(cleanName);
+    setDraftName(cleanName);
+    setAccountUsername(cleanUsername);
+    setPasswordHash(hashed);
+    setAccountCreatedAt(accountCreatedAt || new Date().toISOString());
+    window.sessionStorage.setItem("stocksage:session", cleanUsername);
+    setDraftPassword("");
+    setAuthError(null);
+    setAuthMode(null);
+  }
+
+  async function signInLocalAccount(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    const cleanUsername = draftUsername.trim();
+    if (!cleanUsername || !draftPassword) {
+      setAuthError("Enter your username and password.");
+      return;
+    }
+
+    const hashed = await hashPassword(cleanUsername, draftPassword);
+    if (cleanUsername !== accountUsername || hashed !== passwordHash) {
+      setAuthError("Username or password did not match this browser account.");
+      return;
+    }
+
+    window.sessionStorage.setItem("stocksage:session", cleanUsername);
+    setDraftPassword("");
+    setAuthError(null);
+    setAuthMode(null);
+  }
+
+  function signOutLocalAccount() {
+    window.sessionStorage.removeItem("stocksage:session");
+    setDraftUsername(accountUsername);
+    setDraftPassword("");
+    setAuthError(null);
+    setAuthMode(accountUsername && passwordHash ? "signin" : "setup");
+  }
+
+  function resetLocalAccount() {
+    window.sessionStorage.removeItem("stocksage:session");
+    setAccountUsername("");
+    setPasswordHash("");
+    setAccountCreatedAt("");
+    setDraftUsername("");
+    setDraftPassword("");
+    setAuthError(null);
+    setAuthMode("setup");
+  }
+
   const positiveMove = analysis.quote.changePct >= 0;
   const userInitials = initialsForName(displayName);
 
@@ -467,6 +567,12 @@ export function StockSageDashboard() {
                   setDraftName={setDraftName}
                   onSaveName={saveDisplayName}
                   onResetName={resetDisplayName}
+                  accountUsername={accountUsername}
+                  accountCreatedAt={accountCreatedAt}
+                  watchlist={watchlist}
+                  recent={recent}
+                  onSignOut={signOutLocalAccount}
+                  onResetAccount={resetLocalAccount}
                 />
               ) : null}
             </div>
@@ -499,6 +605,24 @@ export function StockSageDashboard() {
           onSkip={() => {
             setDraftName("");
             setShowNamePrompt(false);
+          }}
+        />
+      ) : null}
+      {hydrated && authMode ? (
+        <AccountPrompt
+          mode={authMode}
+          displayName={draftName}
+          username={draftUsername}
+          password={draftPassword}
+          error={authError}
+          setDisplayName={setDraftName}
+          setUsername={setDraftUsername}
+          setPassword={setDraftPassword}
+          onSubmit={authMode === "setup" ? saveLocalAccount : signInLocalAccount}
+          onUseDisplayOnly={() => {
+            setDisplayName(draftName.trim() || "StockSage User");
+            setAuthMode(null);
+            setAuthError(null);
           }}
         />
       ) : null}
@@ -884,6 +1008,108 @@ function NamePrompt({
           </Button>
           <Button type="submit" disabled={!draftName.trim()}>
             Save Name
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function AccountPrompt({
+  mode,
+  displayName,
+  username,
+  password,
+  error,
+  setDisplayName,
+  setUsername,
+  setPassword,
+  onSubmit,
+  onUseDisplayOnly,
+}: {
+  mode: "setup" | "signin";
+  displayName: string;
+  username: string;
+  password: string;
+  error: string | null;
+  setDisplayName: (value: string) => void;
+  setUsername: (value: string) => void;
+  setPassword: (value: string) => void;
+  onSubmit: (event?: FormEvent<HTMLFormElement>) => void;
+  onUseDisplayOnly: () => void;
+}) {
+  const isSetup = mode === "setup";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 backdrop-blur-sm">
+      <form
+        onSubmit={onSubmit}
+        className="w-full max-w-md rounded-lg border border-cyan-400/25 bg-zinc-950 p-5 shadow-[0_0_60px_rgba(34,211,238,0.10)]"
+      >
+        <div className="mb-5">
+          <StockSageBrand compact />
+        </div>
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-emerald-400/25 bg-emerald-400/10">
+            {isSetup ? <UserRound className="h-5 w-5 text-emerald-300" /> : <KeyRound className="h-5 w-5 text-cyan-300" />}
+          </div>
+          <div>
+            <h2 className="text-2xl font-semibold">{isSetup ? "Set up your account" : "Sign in to StockSage"}</h2>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              {isSetup
+                ? "Create a local browser account to protect your saved watchlist, defaults, and recent analysis on this device."
+                : "Unlock the saved watchlist, defaults, and recent analysis for this browser."}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          {isSetup ? (
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-muted-foreground">Display name</span>
+              <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Marc Asas" maxLength={48} />
+            </label>
+          ) : null}
+          <label className="block space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Username</span>
+            <Input
+              autoFocus={!isSetup}
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder="marc"
+              autoComplete="username"
+            />
+          </label>
+          <label className="block space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Password</span>
+            <Input
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder={isSetup ? "At least 6 characters" : "Your password"}
+              type="password"
+              autoComplete={isSetup ? "new-password" : "current-password"}
+            />
+          </label>
+        </div>
+
+        {error ? (
+          <div className="mt-4 rounded-md border border-rose-400/25 bg-rose-500/10 p-3 text-sm text-rose-200">
+            {error}
+          </div>
+        ) : null}
+
+        <p className="mt-4 text-xs leading-5 text-muted-foreground">
+          This is local-only account protection. For real multi-device login, StockSage would need a hosted auth provider and database.
+        </p>
+
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          {isSetup ? (
+            <Button type="button" variant="outline" onClick={onUseDisplayOnly}>
+              Skip account
+            </Button>
+          ) : null}
+          <Button type="submit" disabled={isSetup ? !displayName.trim() || !username.trim() || password.length < 6 : !username.trim() || !password}>
+            {isSetup ? "Create Account" : "Sign In"}
           </Button>
         </div>
       </form>
@@ -1432,13 +1658,16 @@ function NewsSection({ analysis }: { analysis: StockSageAnalysis }) {
 function ProfileSection({ analysis }: { analysis: StockSageAnalysis }) {
   const metrics = [
     ["Market Cap", analysis.profile.marketCapLabel || "N/A"],
+    ["52W High", currency(analysis.profile.fiftyTwoWeekHigh)],
+    ["52W Low", currency(analysis.profile.fiftyTwoWeekLow)],
+    ["Avg Volume", analysis.profile.averageVolume?.toLocaleString() || "N/A"],
     ["Trailing P/E", analysis.profile.trailingPe?.toFixed(2) || "N/A"],
     ["Forward P/E", analysis.profile.forwardPe?.toFixed(2) || "N/A"],
     ["Price / Book", analysis.profile.priceToBook?.toFixed(2) || "N/A"],
     ["Profit Margin", analysis.profile.profitMargin ? percent(analysis.profile.profitMargin * 100, 2) : "N/A"],
-    ["Operating Margin", analysis.profile.operatingMargin ? percent(analysis.profile.operatingMargin * 100, 2) : "N/A"],
-    ["Return on Equity", analysis.profile.returnOnEquity ? percent(analysis.profile.returnOnEquity * 100, 2) : "N/A"],
+    ["ROE", analysis.profile.returnOnEquity ? percent(analysis.profile.returnOnEquity * 100, 2) : "N/A"],
     ["Dividend Yield", analysis.profile.dividendYield ? percent(analysis.profile.dividendYield * 100, 2) : "N/A"],
+    ["Beta", analysis.profile.beta?.toFixed(2) || "N/A"],
   ];
 
   return (
@@ -1487,6 +1716,10 @@ function SettingsSection({
   timeframe,
   displayName,
   draftName,
+  accountUsername,
+  accountCreatedAt,
+  watchlist,
+  recent,
   setCapital,
   setTargetPct,
   setLossPct,
@@ -1495,6 +1728,8 @@ function SettingsSection({
   onAnalyze,
   onSaveName,
   onResetName,
+  onSignOut,
+  onResetAccount,
   loading,
 }: {
   capital: number;
@@ -1503,6 +1738,10 @@ function SettingsSection({
   timeframe: Timeframe;
   displayName: string;
   draftName: string;
+  accountUsername: string;
+  accountCreatedAt: string;
+  watchlist: string[];
+  recent: string[];
   setCapital: (value: number) => void;
   setTargetPct: (value: number) => void;
   setLossPct: (value: number) => void;
@@ -1511,6 +1750,8 @@ function SettingsSection({
   onAnalyze: () => void;
   onSaveName: (event?: FormEvent<HTMLFormElement>) => void;
   onResetName: () => void;
+  onSignOut: () => void;
+  onResetAccount: () => void;
   loading: boolean;
 }) {
   return (
@@ -1586,7 +1827,52 @@ function SettingsSection({
         </CardContent>
       </Card>
 
-      <Card>
+      <div className="space-y-5">
+        <Card>
+          <CardHeader>
+            <CardTitle>Local Account</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <div className="rounded-lg border border-border bg-zinc-950 p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-400 font-semibold text-black">
+                  {initialsForName(displayName || accountUsername)}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{accountUsername || "Display-only session"}</p>
+                  <p className="text-muted-foreground">
+                    {accountCreatedAt ? `Created ${formattedDate(accountCreatedAt)}` : "No password account saved"}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-2">
+                <Button type="button" variant="outline" onClick={onSignOut} disabled={!accountUsername}>
+                  <LogOut className="h-4 w-4" />
+                  Sign Out
+                </Button>
+                <Button type="button" variant="outline" onClick={onResetAccount}>
+                  <Trash2 className="h-4 w-4" />
+                  Reset Local Account
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Saved Features</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <SavedFeature label="Watchlist" value={watchlist.length ? watchlist.join(", ") : "No saved symbols"} />
+            <SavedFeature label="Recent Analysis" value={recent.length ? recent.join(", ") : "No recent symbols"} />
+            <SavedFeature label="Default Capital" value={currency(capital)} />
+            <SavedFeature label="Risk Defaults" value={`${targetPct}% target / ${lossPct}% max loss`} />
+            <SavedFeature label="Time Horizon" value={timeframe.toUpperCase()} />
+          </CardContent>
+        </Card>
+
+        <Card>
         <CardHeader>
           <CardTitle>Deployment Notes</CardTitle>
         </CardHeader>
@@ -1604,7 +1890,17 @@ function SettingsSection({
             <p>Preferences and watchlist are saved only in this browser.</p>
           </div>
         </CardContent>
-      </Card>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function SavedFeature({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border bg-zinc-950 p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 break-words font-mono text-sm text-foreground">{value}</p>
     </div>
   );
 }

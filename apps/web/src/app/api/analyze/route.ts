@@ -187,6 +187,67 @@ type YahooChartResponse = {
   };
 };
 
+type YahooQuoteResponse = {
+  quoteResponse?: {
+    result?: Array<{
+      longName?: string;
+      shortName?: string;
+      symbol?: string;
+      quoteType?: string;
+      exchange?: string;
+      fullExchangeName?: string;
+      marketCap?: number;
+      trailingPE?: number;
+      forwardPE?: number;
+      priceToBook?: number;
+      trailingAnnualDividendYield?: number;
+      beta?: number;
+      fiftyTwoWeekHigh?: number;
+      fiftyTwoWeekLow?: number;
+      averageDailyVolume3Month?: number;
+    }>;
+  };
+};
+
+type YahooSummaryResponse = {
+  quoteSummary?: {
+    result?: Array<{
+      assetProfile?: {
+        sector?: string;
+        industry?: string;
+        longBusinessSummary?: string;
+        website?: string;
+      };
+      defaultKeyStatistics?: {
+        forwardPE?: { raw?: number };
+        priceToBook?: { raw?: number };
+      };
+      summaryDetail?: {
+        marketCap?: { raw?: number };
+        trailingPE?: { raw?: number };
+        dividendYield?: { raw?: number };
+      };
+      financialData?: {
+        profitMargins?: { raw?: number };
+        operatingMargins?: { raw?: number };
+        returnOnEquity?: { raw?: number };
+      };
+    }>;
+  };
+};
+
+type YahooSearchResponse = {
+  news?: Array<{
+    title?: string;
+    publisher?: string;
+    link?: string;
+    thumbnail?: {
+      resolutions?: Array<{ url?: string }>;
+    };
+    providerPublishTime?: number;
+  }>;
+};
+
 function average(values: number[]) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
@@ -242,25 +303,50 @@ function compactMarketCap(value: number | null) {
   return `$${value.toLocaleString("en-US")}`;
 }
 
+async function fetchYahooJson<T>(url: string): Promise<T | null> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0 StockSage/1.0",
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 async function analyzeWithYahooFree(request: AnalyzeRequest): Promise<StockSageAnalysis> {
   const ticker = request.ticker.trim().toUpperCase();
   const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     ticker,
   )}?range=1y&interval=1d&includePrePost=false`;
+  const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}`;
+  const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(
+    ticker,
+  )}?modules=assetProfile,summaryDetail,defaultKeyStatistics,financialData`;
+  const searchUrl = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(
+    ticker,
+  )}&quotesCount=0&newsCount=8`;
 
-  const chartResponse = await fetch(chartUrl, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "StockSage/1.0",
-    },
-    cache: "no-store",
-  });
+  const [chartPayload, quotePayload, summaryPayload, searchPayload] = await Promise.all([
+    fetchYahooJson<YahooChartResponse>(chartUrl),
+    fetchYahooJson<YahooQuoteResponse>(quoteUrl),
+    fetchYahooJson<YahooSummaryResponse>(summaryUrl),
+    fetchYahooJson<YahooSearchResponse>(searchUrl),
+  ]);
 
-  if (!chartResponse.ok) {
-    throw new Error(`Yahoo Finance returned ${chartResponse.status} for ${ticker}.`);
+  if (!chartPayload) {
+    throw new Error(`Yahoo Finance did not return chart data for ${ticker}.`);
   }
 
-  const chartPayload = (await chartResponse.json()) as YahooChartResponse;
   const result = chartPayload.chart?.result?.[0];
   const quote = result?.indicators?.quote?.[0];
   const timestamps = result?.timestamp || [];
@@ -313,6 +399,12 @@ async function analyzeWithYahooFree(request: AnalyzeRequest): Promise<StockSageA
   });
 
   const latest = rawRows[rawRows.length - 1];
+  const yahooQuote = quotePayload?.quoteResponse?.result?.[0];
+  const yahooSummary = summaryPayload?.quoteSummary?.result?.[0];
+  const assetProfile = yahooSummary?.assetProfile;
+  const summaryDetail = yahooSummary?.summaryDetail;
+  const defaultStats = yahooSummary?.defaultKeyStatistics;
+  const financialData = yahooSummary?.financialData;
   const previousClose =
     result.meta?.previousClose || result.meta?.chartPreviousClose || rawRows[rawRows.length - 2]?.close || latest.close;
   const change = latest.close - previousClose;
@@ -363,6 +455,19 @@ async function analyzeWithYahooFree(request: AnalyzeRequest): Promise<StockSageA
     };
   });
   const lastForecast = forecastPath[forecastPath.length - 1];
+  const companyName = yahooQuote?.longName || result.meta?.longName || yahooQuote?.shortName || result.meta?.shortName || ticker;
+  const marketCap = summaryDetail?.marketCap?.raw ?? yahooQuote?.marketCap ?? null;
+  const news =
+    searchPayload?.news
+      ?.filter((item) => item.title && item.link)
+      .slice(0, 6)
+      .map((item) => ({
+        title: item.title || `${ticker} market update`,
+        publisher: item.publisher || "Yahoo Finance",
+        url: item.link || `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`,
+        imageUrl: item.thumbnail?.resolutions?.find((image) => image.url)?.url || null,
+        publishedAt: item.providerPublishTime || new Date().toISOString(),
+      })) || [];
 
   return {
     ticker,
@@ -404,36 +509,40 @@ async function analyzeWithYahooFree(request: AnalyzeRequest): Promise<StockSageA
     },
     chart,
     profile: {
-      name: result.meta?.longName || result.meta?.shortName || ticker,
+      name: companyName,
       ticker,
-      sector: "Live Yahoo Finance",
-      industry: result.meta?.exchangeName || "Market data",
+      sector: assetProfile?.sector || yahooQuote?.quoteType || "Live Yahoo Finance",
+      industry: assetProfile?.industry || yahooQuote?.fullExchangeName || yahooQuote?.exchange || result.meta?.exchangeName || "Market data",
       summary:
-        "Live fallback data is fetched from Yahoo Finance chart endpoints. Deploy the Python FastAPI service for model-backed yfinance analysis, fundamentals, and news.",
-      website: null,
-      marketCap: null,
-      marketCapLabel: compactMarketCap(null),
-      trailingPe: null,
-      forwardPe: null,
-      priceToBook: null,
-      profitMargin: null,
-      operatingMargin: null,
-      returnOnEquity: null,
-      dividendYield: null,
-      beta: null,
-      fiftyTwoWeekHigh: Math.max(...rawRows.map((row) => row.high)),
-      fiftyTwoWeekLow: Math.min(...rawRows.map((row) => row.low)),
-      averageVolume: Math.round(avgVolume),
+        assetProfile?.longBusinessSummary ||
+        `${companyName} live quote, chart, fundamentals, and related headlines are fetched from Yahoo Finance free endpoints. Deploy the Python FastAPI service for the full model-backed yfinance pipeline.`,
+      website: assetProfile?.website || `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`,
+      marketCap,
+      marketCapLabel: compactMarketCap(marketCap),
+      trailingPe: summaryDetail?.trailingPE?.raw ?? yahooQuote?.trailingPE ?? null,
+      forwardPe: defaultStats?.forwardPE?.raw ?? yahooQuote?.forwardPE ?? null,
+      priceToBook: defaultStats?.priceToBook?.raw ?? yahooQuote?.priceToBook ?? null,
+      profitMargin: financialData?.profitMargins?.raw ?? null,
+      operatingMargin: financialData?.operatingMargins?.raw ?? null,
+      returnOnEquity: financialData?.returnOnEquity?.raw ?? null,
+      dividendYield: summaryDetail?.dividendYield?.raw ?? yahooQuote?.trailingAnnualDividendYield ?? null,
+      beta: yahooQuote?.beta ?? null,
+      fiftyTwoWeekHigh: yahooQuote?.fiftyTwoWeekHigh ?? Math.max(...rawRows.map((row) => row.high)),
+      fiftyTwoWeekLow: yahooQuote?.fiftyTwoWeekLow ?? Math.min(...rawRows.map((row) => row.low)),
+      averageVolume: yahooQuote?.averageDailyVolume3Month ?? Math.round(avgVolume),
     },
-    news: [
-      {
-        title: `${ticker} live market data refreshed from Yahoo Finance`,
-        publisher: "StockSage Free Data",
-        url: `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`,
-        imageUrl: null,
-        publishedAt: new Date().toISOString(),
-      },
-    ],
+    news:
+      news.length > 0
+        ? news
+        : [
+            {
+              title: `${ticker} live market data refreshed from Yahoo Finance`,
+              publisher: "StockSage Free Data",
+              url: `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`,
+              imageUrl: null,
+              publishedAt: new Date().toISOString(),
+            },
+          ],
     disclaimer:
       "Live fallback uses free Yahoo Finance chart data for research only; deploy the FastAPI yfinance service for full model-backed analysis.",
   };
