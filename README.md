@@ -8,7 +8,7 @@ StockSage is a finance dashboard for stock analysis, forecasting, and trade plan
 - `services/api`: FastAPI service for `yfinance`, feature engineering, PyTorch signal inference, RidgeCV price forecasting, news, and profile data.
 - `services/api/model_artifacts`: small trained model and scaler files from the original StockSage project.
 
-The web app calls `POST /api/analyze`, which proxies to the FastAPI service configured by `STOCKSAGE_API_URL`.
+The web app calls `POST /api/analyze`, which proxies to the FastAPI service configured by `STOCKSAGE_API_URL`. In local development, the proxy falls back to `http://localhost:8000` so the free API setup works without extra config.
 
 ## Local Development
 
@@ -30,7 +30,7 @@ pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-Create `apps/web/.env.local`:
+`apps/web/.env.local` is optional for local development because the dashboard defaults to the API URL below. Create it if you want the value explicit:
 
 ```bash
 STOCKSAGE_API_URL=http://localhost:8000
@@ -65,7 +65,7 @@ Content-Type: application/json
 
 ### FastAPI on Render
 
-Render can use `render.yaml` from the repo root. The API service uses:
+Render can use `render.yaml` from the repo root. This is the recommended free/low-cost API deployment because it can run the Python ML dependencies separately from Vercel. The API service uses:
 
 - build command: `pip install -r requirements.txt`
 - start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
@@ -75,7 +75,7 @@ After Render deploys, copy the service URL.
 
 ### Web on Vercel
 
-Create a Vercel project with root directory `apps/web`.
+Create a Vercel project from the repo root and use the Services preset. The root `vercel.json` routes the `web` service to `apps/web`.
 
 Add this environment variable:
 
@@ -97,4 +97,3 @@ PYTHONPATH=services/api pytest services/api/tests
 ## Disclaimer
 
 StockSage is for educational and research purposes only. It is not financial advice.
-

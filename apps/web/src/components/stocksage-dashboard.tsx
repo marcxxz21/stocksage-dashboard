@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -28,6 +27,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Star,
+  Terminal,
   Trash2,
   TrendingUp,
   WalletCards,
@@ -71,6 +71,7 @@ const navItems = [
 type SectionId = (typeof navItems)[number]["id"];
 
 type PersistedState = {
+  displayName: string;
   ticker: string;
   capital: number;
   targetPct: number;
@@ -81,6 +82,7 @@ type PersistedState = {
 };
 
 const defaults: PersistedState = {
+  displayName: "",
   ticker: "NVDA",
   capital: 1000,
   targetPct: 15,
@@ -151,8 +153,29 @@ function normalizeTicker(value: string) {
   return value.trim().toUpperCase().replace(/\s+/g, "");
 }
 
+function initialsForName(name: string) {
+  const clean = name.trim();
+
+  if (!clean) {
+    return "SS";
+  }
+
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
+}
+
+function firstName(name: string) {
+  return name.trim().split(/\s+/)[0] || "Analyst";
+}
+
 export function StockSageDashboard() {
   const [active, setActive] = useState<SectionId>("overview");
+  const [displayName, setDisplayName] = useState(defaults.displayName);
+  const [draftName, setDraftName] = useState(defaults.displayName);
   const [ticker, setTicker] = useState(defaults.ticker);
   const [capital, setCapital] = useState(defaults.capital);
   const [targetPct, setTargetPct] = useState(defaults.targetPct);
@@ -165,15 +188,21 @@ export function StockSageDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"demo" | "live">("demo");
   const [hydrated, setHydrated] = useState(false);
+  const [showNamePrompt, setShowNamePrompt] = useState(false);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       try {
         const stored = window.localStorage.getItem(STORAGE_KEY);
         if (!stored) {
+          setShowNamePrompt(true);
           return;
         }
         const parsed = JSON.parse(stored) as Partial<PersistedState>;
+        const savedName = parsed.displayName || defaults.displayName;
+        setDisplayName(savedName);
+        setDraftName(savedName);
+        setShowNamePrompt(!savedName);
         setTicker(parsed.ticker || defaults.ticker);
         setCapital(parsed.capital || defaults.capital);
         setTargetPct(parsed.targetPct || defaults.targetPct);
@@ -183,6 +212,7 @@ export function StockSageDashboard() {
         setRecent(parsed.recent?.length ? parsed.recent : defaults.recent);
       } catch {
         window.localStorage.removeItem(STORAGE_KEY);
+        setShowNamePrompt(true);
       } finally {
         setHydrated(true);
       }
@@ -196,6 +226,7 @@ export function StockSageDashboard() {
       return;
     }
     const payload: PersistedState = {
+      displayName,
       ticker,
       capital,
       targetPct,
@@ -205,7 +236,7 @@ export function StockSageDashboard() {
       recent,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [capital, hydrated, lossPct, recent, targetPct, ticker, timeframe, watchlist]);
+  }, [capital, displayName, hydrated, lossPct, recent, targetPct, ticker, timeframe, watchlist]);
 
   const requestPayload: AnalyzeRequest = useMemo(
     () => ({
@@ -262,7 +293,25 @@ export function StockSageDashboard() {
     setActive("overview");
   }
 
+  function saveDisplayName(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    const clean = draftName.trim();
+    if (!clean) {
+      return;
+    }
+    setDisplayName(clean);
+    setDraftName(clean);
+    setShowNamePrompt(false);
+  }
+
+  function resetDisplayName() {
+    setDisplayName("");
+    setDraftName("");
+    setShowNamePrompt(true);
+  }
+
   const positiveMove = analysis.quote.changePct >= 0;
+  const userInitials = initialsForName(displayName);
 
   return (
     <div className="min-h-screen bg-background text-foreground" data-testid="stock-dashboard">
@@ -273,8 +322,14 @@ export function StockSageDashboard() {
           active={active}
           source={source}
           analysis={analysis}
+          displayName={displayName}
+          initials={userInitials}
           onNavigate={setActive}
           onChooseTicker={chooseTicker}
+          onEditName={() => {
+            setDraftName(displayName);
+            setShowNamePrompt(true);
+          }}
         />
 
         <main className="mx-auto flex w-full max-w-[1720px] flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
@@ -360,6 +415,11 @@ export function StockSageDashboard() {
                   setTimeframe={setTimeframe}
                   onAnalyze={() => analyze()}
                   loading={loading}
+                  displayName={displayName}
+                  draftName={draftName}
+                  setDraftName={setDraftName}
+                  onSaveName={saveDisplayName}
+                  onResetName={resetDisplayName}
                 />
               ) : null}
             </div>
@@ -383,6 +443,44 @@ export function StockSageDashboard() {
           </section>
         </main>
       </div>
+
+      {hydrated && showNamePrompt ? (
+        <NamePrompt
+          draftName={draftName}
+          setDraftName={setDraftName}
+          onSave={saveDisplayName}
+          onSkip={() => {
+            setDraftName("");
+            setShowNamePrompt(false);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function StockSageBrand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={cn("flex min-w-0 items-center gap-3", compact && "gap-2")}>
+      <div
+        className={cn(
+          "relative flex shrink-0 items-center justify-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 shadow-[0_0_24px_rgba(16,185,129,0.12)]",
+          compact ? "h-9 w-9" : "h-11 w-11",
+        )}
+      >
+        <svg viewBox="0 0 36 36" className={compact ? "h-6 w-6" : "h-7 w-7"} aria-hidden="true">
+          <path d="M7 23.5 13.2 17l4.5 4.2L28.5 10" fill="none" stroke="#22c55e" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M25.5 9.5h4v4" fill="none" stroke="#06b6d4" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="9" cy="25" r="2.4" fill="#06b6d4" />
+          <circle cx="29" cy="9" r="1.7" fill="#a7f3d0" />
+        </svg>
+      </div>
+      <div className="min-w-0">
+        <div className={cn("truncate font-semibold tracking-normal", compact ? "text-base" : "text-lg")}>
+          Stock<span className="text-emerald-300">Sage</span>
+        </div>
+        {!compact ? <div className="truncate text-xs text-muted-foreground">AI market terminal</div> : null}
+      </div>
     </div>
   );
 }
@@ -390,14 +488,8 @@ export function StockSageDashboard() {
 function Sidebar({ active, onNavigate }: { active: SectionId; onNavigate: (id: SectionId) => void }) {
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 border-r border-border bg-black/70 backdrop-blur lg:flex lg:flex-col">
-      <div className="flex h-20 items-center gap-3 border-b border-border px-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-emerald-400/30 bg-emerald-400/10">
-          <Image src="/stocksage-logo.png" alt="" width={28} height={28} className="h-7 w-7 object-contain" />
-        </div>
-        <div>
-          <div className="text-lg font-semibold">StockSage</div>
-          <div className="text-xs text-muted-foreground">AI market terminal</div>
-        </div>
+      <div className="flex h-20 items-center border-b border-border px-4">
+        <StockSageBrand />
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-5">
@@ -441,20 +533,26 @@ function TopBar({
   active,
   source,
   analysis,
+  displayName,
+  initials,
   onNavigate,
   onChooseTicker,
+  onEditName,
 }: {
   active: SectionId;
   source: "demo" | "live";
   analysis: StockSageAnalysis;
+  displayName: string;
+  initials: string;
   onNavigate: (id: SectionId) => void;
   onChooseTicker: (ticker: string) => void;
+  onEditName: () => void;
 }) {
   const current = navItems.find((item) => item.id === active);
   const CurrentIcon = current?.icon;
 
   return (
-    <header className="sticky top-0 z-30 border-b border-border bg-black/80 backdrop-blur">
+    <header className="sticky top-0 z-30 border-b border-border bg-black/85 shadow-[0_1px_0_rgba(16,185,129,0.08)] backdrop-blur">
       <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:px-8">
         <Sheet>
           <SheetTrigger asChild>
@@ -471,9 +569,8 @@ function TopBar({
           </SheetTrigger>
           <SheetContent side="left" className="w-72 border-border bg-black p-0">
             <SheetHeader className="border-b border-border px-4 py-5 text-left">
-              <SheetTitle className="flex items-center gap-3">
-                <Image src="/stocksage-logo.png" alt="" width={28} height={28} className="h-7 w-7 object-contain" />
-                StockSage
+              <SheetTitle>
+                <StockSageBrand />
               </SheetTitle>
             </SheetHeader>
             <nav className="space-y-1 p-3">
@@ -498,7 +595,11 @@ function TopBar({
           </SheetContent>
         </Sheet>
 
-        <div className="min-w-0 flex-1">
+        <div className="hidden shrink-0 lg:block">
+          <StockSageBrand compact />
+        </div>
+
+        <div className="min-w-0 flex-1 lg:pl-3">
           <div className="flex items-center gap-2">
             {CurrentIcon ? <CurrentIcon className="h-4 w-4 text-emerald-400" /> : null}
             <h2 className="truncate text-base font-semibold sm:text-lg">{current?.label}</h2>
@@ -508,7 +609,7 @@ function TopBar({
           </div>
         </div>
 
-        <div className="hidden min-w-64 items-center gap-2 rounded-md border border-border bg-zinc-950 px-3 py-2 md:flex">
+        <div className="hidden min-w-64 items-center gap-2 rounded-md border border-border bg-zinc-950/90 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] md:flex">
           <Search className="h-4 w-4 text-muted-foreground" />
           <button
             type="button"
@@ -521,15 +622,32 @@ function TopBar({
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" aria-label="Notifications">
+            <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label="Notifications">
               <Bell className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Alerts placeholder</TooltipContent>
         </Tooltip>
-        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-cyan-500 font-mono text-sm font-semibold text-black">
-          JD
-        </div>
+        <button
+          type="button"
+          onClick={onEditName}
+          className="hidden max-w-32 truncate text-right text-sm text-muted-foreground transition-colors hover:text-foreground sm:block"
+        >
+          {displayName ? `Hi, ${firstName(displayName)}` : "Set name"}
+        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={onEditName}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-400 text-sm font-semibold text-black shadow-[0_0_24px_rgba(34,211,238,0.16)] transition-transform hover:scale-[1.03]"
+              aria-label={displayName ? `Edit profile for ${displayName}` : "Set display name"}
+            >
+              {initials}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{displayName ? `Signed in as ${displayName}` : "Set display name"}</TooltipContent>
+        </Tooltip>
       </div>
     </header>
   );
@@ -661,12 +779,67 @@ function ControlRail({
 
 function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
-      <div>
-        <div className="font-medium">Live analysis is unavailable</div>
-        <div className="mt-1 text-amber-100/80">{message}</div>
+    <div className="overflow-hidden rounded-lg border border-amber-400/25 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(8,8,8,0.88))] shadow-[0_0_32px_rgba(245,158,11,0.08)]">
+      <div className="flex items-start gap-3 p-4 text-sm text-amber-50">
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-amber-300/30 bg-amber-400/10">
+          <AlertTriangle className="h-4 w-4 text-amber-300" />
+        </div>
+        <div className="min-w-0">
+          <div className="font-medium text-amber-100">Live analysis is unavailable</div>
+          <div className="mt-1 leading-6 text-amber-100/75">{message}</div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-100/65">
+            <Terminal className="h-3.5 w-3.5" />
+            <span className="font-mono">cd services/api && uvicorn app.main:app --reload --port 8000</span>
+          </div>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function NamePrompt({
+  draftName,
+  setDraftName,
+  onSave,
+  onSkip,
+}: {
+  draftName: string;
+  setDraftName: (value: string) => void;
+  onSave: (event?: FormEvent<HTMLFormElement>) => void;
+  onSkip: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
+      <form
+        onSubmit={onSave}
+        className="w-full max-w-md rounded-lg border border-emerald-400/25 bg-zinc-950 p-5 shadow-[0_0_60px_rgba(16,185,129,0.12)]"
+      >
+        <div className="mb-5">
+          <StockSageBrand compact />
+        </div>
+        <h2 className="text-2xl font-semibold">Welcome to StockSage</h2>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Enter your display name so the dashboard can personalize your profile avatar and settings.
+        </p>
+        <label className="mt-5 block space-y-2">
+          <span className="text-sm font-medium text-muted-foreground">Display name</span>
+          <Input
+            autoFocus
+            value={draftName}
+            onChange={(event) => setDraftName(event.target.value)}
+            placeholder="Marc Asas"
+            maxLength={48}
+          />
+        </label>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button type="button" variant="outline" onClick={onSkip}>
+            Skip for now
+          </Button>
+          <Button type="submit" disabled={!draftName.trim()}>
+            Save Name
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -1265,31 +1438,66 @@ function SettingsSection({
   targetPct,
   lossPct,
   timeframe,
+  displayName,
+  draftName,
   setCapital,
   setTargetPct,
   setLossPct,
   setTimeframe,
+  setDraftName,
   onAnalyze,
+  onSaveName,
+  onResetName,
   loading,
 }: {
   capital: number;
   targetPct: number;
   lossPct: number;
   timeframe: Timeframe;
+  displayName: string;
+  draftName: string;
   setCapital: (value: number) => void;
   setTargetPct: (value: number) => void;
   setLossPct: (value: number) => void;
   setTimeframe: (value: Timeframe) => void;
+  setDraftName: (value: string) => void;
   onAnalyze: () => void;
+  onSaveName: (event?: FormEvent<HTMLFormElement>) => void;
+  onResetName: () => void;
   loading: boolean;
 }) {
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
       <Card>
         <CardHeader>
-          <CardTitle>Display Preferences</CardTitle>
+          <CardTitle>Profile and Defaults</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
+          <form onSubmit={onSaveName} className="rounded-lg border border-border bg-zinc-950 p-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-400 font-semibold text-black">
+                {initialsForName(displayName || draftName)}
+              </div>
+              <label className="min-w-0 flex-1 space-y-2">
+                <span className="text-sm text-muted-foreground">Display name</span>
+                <Input
+                  value={draftName}
+                  onChange={(event) => setDraftName(event.target.value)}
+                  placeholder="Marc Asas"
+                  maxLength={48}
+                />
+              </label>
+            </div>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={onResetName}>
+                Reset Name
+              </Button>
+              <Button type="submit" disabled={!draftName.trim()}>
+                Save Profile
+              </Button>
+            </div>
+          </form>
+
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-2">
               <span className="text-sm text-muted-foreground">Default Capital</span>
@@ -1338,7 +1546,11 @@ function SettingsSection({
         <CardContent className="space-y-4 text-sm leading-6 text-muted-foreground">
           <div className="flex gap-3">
             <Info className="mt-1 h-4 w-4 shrink-0 text-cyan-300" />
-            <p>Set STOCKSAGE_API_URL in Vercel to the deployed FastAPI base URL.</p>
+            <p>Local development defaults to http://localhost:8000 when STOCKSAGE_API_URL is not set.</p>
+          </div>
+          <div className="flex gap-3">
+            <Terminal className="mt-1 h-4 w-4 shrink-0 text-amber-300" />
+            <p>For Vercel production, deploy the free FastAPI service on Render and set STOCKSAGE_API_URL to that URL.</p>
           </div>
           <div className="flex gap-3">
             <Shield className="mt-1 h-4 w-4 shrink-0 text-emerald-300" />
